@@ -280,20 +280,21 @@ async function startCamera(){
       const pump=async()=>{ if(!running) return; if(mode==='vip'||mode==='wings'){ try{ await seg.send({image:video}); }catch(e){} } requestAnimationFrame(pump); };
       running=true; pump();
     }
-    if(!pose){
-      pose=new Pose({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/${f}`});
-      pose.setOptions({modelComplexity:1,smoothLandmarks:true,enableSegmentation:false,minDetectionConfidence:0.5,minTrackingConfidence:0.5});
-      pose.onResults(r=>{ if(r.poseLandmarks) poseLandmarks=r.poseLandmarks; else { poseLandmarks=null; wingsAttachTime=null; } });
-      const pumpPose=async()=>{ if(!running) return; if(mode==='wings'){ try{ await pose.send({image:video}); }catch(e){} } requestAnimationFrame(pumpPose); };
-      pumpPose();
-    }
     running=true; gate.classList.add('hidden'); render();
   }catch(e){ gateBtn.disabled=false; gateBtn.textContent="Try again"; gateMsg.textContent="Camera access is needed. Allow it and try again."; }
 }
 
 document.getElementById('mVip').onclick=e=>{mode='vip';setSeg(e.target);};
 document.getElementById('mOverlay').onclick=e=>{mode='overlay';setSeg(e.target);};
-document.getElementById('mWings').onclick=e=>{mode='wings';wingsAttachTime=null;setSeg(e.target);};
+function ensurePose(){
+  if(pose) return;
+  pose=new Pose({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/${f}`});
+  pose.setOptions({modelComplexity:1,smoothLandmarks:true,enableSegmentation:false,minDetectionConfidence:0.5,minTrackingConfidence:0.5});
+  pose.onResults(r=>{ if(r.poseLandmarks) poseLandmarks=r.poseLandmarks; else { poseLandmarks=null; wingsAttachTime=null; } });
+  const pumpPose=async()=>{ if(!running) return; if(mode==='wings'){ try{ await pose.send({image:video}); }catch(e){} } requestAnimationFrame(pumpPose); };
+  pumpPose();
+}
+document.getElementById('mWings').onclick=e=>{mode='wings';wingsAttachTime=null;setSeg(e.target);ensurePose();};
 function setSeg(b){ document.querySelectorAll('.seg button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); }
 document.getElementById('flip').onclick=()=>{ facing=facing==='user'?'environment':'user'; startCamera(); };
 
