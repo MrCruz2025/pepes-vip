@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Pepe's VIP Photo</title>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{ --gold:#D4AF37; --gold-light:#F1D77A; --gold-dark:#8A6B14; --black:#0B0A08; --ink:#F4EBD3; }
+  *{ box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
+  html,body{ height:100%; background:var(--black); color:var(--ink); font-family:Inter,system-ui,sans-serif; overflow:hidden; }
+  #stage{ position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#000; }
+  #out{ width:100%; height:100%; object-fit:cover; display:block; }
+  video{ position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
+  .ui{ position:fixed; left:0; right:0; padding:0 16px; display:flex; flex-direction:column; align-items:center; gap:12px; z-index:5; }
+  .top{ top:calc(env(safe-area-inset-top) + 10px); gap:8px; }
+  .bottom{ bottom:calc(env(safe-area-inset-bottom) + 18px); }
+  .seg{ display:flex; flex-wrap:wrap; justify-content:center; background:rgba(11,10,8,.75); border:1px solid var(--gold-dark); border-radius:999px; padding:4px; backdrop-filter:blur(8px); max-width:94vw; }
+  .seg button{ appearance:none; border:0; background:transparent; color:var(--ink); font:500 13px Inter,sans-serif; padding:9px 14px; border-radius:999px; white-space:nowrap; }
+  .seg button.on{ background:var(--gold); color:var(--black); }
+  #shutter{ width:76px; height:76px; border-radius:50%; border:4px solid var(--gold); background:rgba(11,10,8,.4); position:relative; }
+  #shutter::after{ content:""; position:absolute; inset:7px; border-radius:50%; background:var(--gold-light); }
+  #shutter:active::after{ transform:scale(.9); }
+  .row{ display:flex; align-items:center; gap:22px; }
+  .icon{ width:48px; height:48px; border-radius:50%; border:1px solid var(--gold-dark); background:rgba(11,10,8,.75); color:var(--gold-light); font-size:20px; display:flex; align-items:center; justify-content:center; }
+  .brand{ font:700 13px Cinzel,serif; letter-spacing:.22em; color:var(--gold-light); text-transform:uppercase; text-shadow:0 1px 8px rgba(0,0,0,.8); }
+  #gate,#review{ position:fixed; inset:0; z-index:10; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:32px; gap:18px; background:var(--black); }
+  #gate h1{ font:700 30px Cinzel,serif; color:var(--gold-light); letter-spacing:.08em; }
+  #gate p{ max-width:320px; line-height:1.55; color:#CBBF9E; }
+  .btn{ appearance:none; border:0; background:var(--gold); color:var(--black); font:500 16px Inter,sans-serif; padding:14px 26px; border-radius:999px; }
+  .btn.ghost{ background:transparent; color:var(--gold-light); border:1px solid var(--gold-dark); }
+  #review{ display:none; background:#000; padding:0; }
+  #review img{ max-width:100%; max-height:100%; object-fit:contain; }
+  #review .ui{ z-index:11; }
+  .hidden{ display:none !important; }
+  .stars{ position:absolute; inset:0; pointer-events:none; opacity:.5; }
+  #loadingBadge{ position:fixed; top:calc(env(safe-area-inset-top) + 78px); left:50%; transform:translateX(-50%); z-index:6; background:rgba(11,10,8,.8); border:1px solid var(--gold-dark); color:var(--gold-light); font:500 12px Inter,sans-serif; padding:7px 14px; border-radius:999px; }
+  #loadingBadge.hidden{ display:none; }
+</style>
+</head>
+<body>
+
+<section id="gate">
+  <div class="brand">Pepe's night club &amp; karaoke bar</div>
+  <h1>VIP Photo</h1>
+  <p id="gateMsg">Checking that you're at Pepe's…</p>
+  <button class="btn hidden" id="gateBtn">Open camera</button>
+</section>
+
+<div id="stage">
+  <video id="cam" autoplay playsinline muted></video>
+  <canvas id="out"></canvas>
+</div>
+
+<div class="ui top" id="uiTop">
+  <div class="brand">Welcome to Pepe's</div>
+  <div class="seg">
+    <button id="mVip" class="on">VIP wall</button>
+    <button id="mOverlay">Overlay</button>
+    <button id="mWings">Angel Wings</button>
+  </div>
+</div>
+
+<div id="loadingBadge" class="hidden">Loading VIP effect…</div>
+<div class="ui bottom" id="uiBottom">
+  <div class="row">
+    <button class="icon" id="flip" aria-label="Flip camera">&#8635;</button>
+    <button id="shutter" aria-label="Take photo"></button>
+    <div class="icon" style="visibility:hidden"></div>
+  </div>
+</div>
+
+<section id="review">
+  <img id="shot" alt="Your VIP photo">
+  <div class="ui bottom">
+    <div class="row">
+      <button class="btn ghost" id="retake">Retake</button>
+      <button class="btn" id="save">Save</button>
+      <button class="btn" id="share">Share</button>
+    </div>
+  </div>
+</section>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/selfie_segmentation.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/pose.js"></script>
+<script>
+/* ================== SETTINGS — edit these ================== */
+const SECRET_KEY   = "pepesvip2026";        // QR link must include ?key=pepesvip2026
+const PEPES_LAT    = 45.4972562;            // 4908 SE Powell Blvd
+const PEPES_LNG    = -122.6123690;
+const RADIUS_M     = 150;                   // how close the phone must be
+const REQUIRE_GPS  = true;                  // false = key only, no location check
+const LOGO_SRC     = "pepes-logo.png";
+/* =========================================================== */
+
+const gate=document.getElementById('gate'), gateMsg=document.getElementById('gateMsg'), gateBtn=document.getElementById('gateBtn');
+const video=document.getElementById('cam'), out=document.getElementById('out'), ctx=out.getContext('2d');
+const review=document.getElementById('review'), shotImg=document.getElementById('shot');
+let mode='vip', facing='user', stream=null, seg=null, mask=null, wallCanvas=null, logo=new Image(), running=false, lastShot=null;
+let pose=null, poseLandmarks=null, wingsAttachTime=null, personBuf=null, personBufCtx=null;
+// shared downscaled frame for ML inference — much faster than feeding full-res video
+const PROC_W=256;
+const procCanvas=document.createElement('canvas'), procCtx=procCanvas.getContext('2d');
+let procFrameTick=-1, lastRenderFrame=-1;
+function getProcFrame(){
+  if(procFrameTick===lastRenderFrame) return procCanvas; // already drawn this render tick
+  const scale=PROC_W/(video.videoWidth||PROC_W);
+  const pw=PROC_W, ph=Math.max(1,Math.round((video.videoHeight||PROC_W)*scale));
+  if(procCanvas.width!==pw||procCanvas.height!==ph){ procCanvas.width=pw; procCanvas.height=ph; }
+  procCtx.drawImage(video,0,0,pw,ph);
+  procFrameTick=lastRenderFrame;
+  return procCanvas;
+}
+let segSkip=0, poseSkip=0;
+const SEG_EVERY=2, POSE_EVERY=2; // run inference every Nth loop tick
+logo.src=LOGO_SRC;
+
+function dist(lat1,lng1,lat2,lng2){const R=6371000,toR=x=>x*Math.PI/180;const dLat=toR(lat2-lat1),dLng=toR(lng2-lng1);const a=Math.sin(dLat/2)**2+Math.cos(toR(lat1))*Math.cos(toR(lat2))*Math.sin(dLng/2)**2;return 2*R*Math.asin(Math.sqrt(a));}
+
+function checkGate(){
+  const key=new URLSearchParams(location.search).get('key');
+  if(key!==SECRET_KEY){ gateMsg.textContent="This photo booth only opens from the QR code at Pepe's. Scan it at your table."; return; }
+  if(!REQUIRE_GPS){ ready(); return; }
+  if(!navigator.geolocation){ gateMsg.textContent="Your phone doesn't share location. Ask staff for help."; return; }
+  navigator.geolocation.getCurrentPosition(p=>{
+    const d=dist(p.coords.latitude,p.coords.longitude,PEPES_LAT,PEPES_LNG);
+    if(d<=RADIUS_M+Math.min(p.coords.accuracy||0,100)) ready();
+    else gateMsg.textContent="You're not at Pepe's yet. Come visit us at 4908 SE Powell and try again.";
+  },()=>{ gateMsg.textContent="Allow location access so we can confirm you're at Pepe's, then reload."; gateBtn.textContent="Try again"; gateBtn.classList.remove('hidden'); gateBtn.onclick=()=>location.reload(); },{enableHighAccuracy:true,timeout:12000,maximumAge:60000});
+}
+function ready(){ gateMsg.textContent="You're in. Strike a pose."; gateBtn.textContent="Open camera"; gateBtn.classList.remove('hidden'); gateBtn.onclick=startCamera; }
+
+function getGoldLogo(){
+  if(!(logo.complete&&logo.naturalWidth)) return null;
+  return logo; // already gold/white in this asset
+}
+/* ---- Build the white & gold VIP step-and-repeat wall ---- */
+function crown(g,x,y,s){
+  g.save(); g.translate(x,y); g.scale(s,s);
+  const grad=g.createLinearGradient(0,-14,0,10); grad.addColorStop(0,'#FCEBA0'); grad.addColorStop(.5,'#D9AF3E'); grad.addColorStop(1,'#8A6B14');
+  g.fillStyle=grad; g.strokeStyle='#7A5C10'; g.lineWidth=0.8;
+  g.beginPath();
+  g.moveTo(-16,10); g.lineTo(-16,-2); g.lineTo(-9,-11); g.lineTo(-4,-2); g.lineTo(0,-13); g.lineTo(4,-2); g.lineTo(9,-11); g.lineTo(16,-2); g.lineTo(16,10); g.closePath();
+  g.fill(); g.stroke();
+  [-9,0,9].forEach(cx=>{ g.beginPath(); g.arc(cx, cx===0?-13:-11, 2.1,0,Math.PI*2); g.fill(); g.stroke(); });
+  g.restore();
+}
+function star(g,x,y,r){
+  g.beginPath(); for(let i=0;i<10;i++){const a=-Math.PI/2+i*Math.PI/5, rr=i%2?r*.45:r; g.lineTo(x+Math.cos(a)*rr,y+Math.sin(a)*rr);} g.closePath();
+  const gr=g.createRadialGradient(x,y,0,x,y,r); gr.addColorStop(0,'#FCEBA0'); gr.addColorStop(1,'#B8901F'); g.fillStyle=gr; g.fill();
+  g.strokeStyle='#7A5C10'; g.lineWidth=Math.max(0.6,r*.03); g.stroke();
+}
+function goldText(g,text,x,y,size,weight=800){
+  g.font=`${weight} ${size}px Georgia, serif`; g.textAlign='center'; g.textBaseline='middle';
+  const gr=g.createLinearGradient(0,y-size/2,0,y+size/2); gr.addColorStop(0,'#FCEBA0'); gr.addColorStop(.45,'#D9AF3E'); gr.addColorStop(1,'#8A6B14');
+  g.save(); g.shadowColor='rgba(0,0,0,.35)'; g.shadowBlur=size*.08; g.shadowOffsetY=size*.05;
+  g.lineWidth=size*.03; g.strokeStyle='#7A5C10'; g.strokeText(text,x,y);
+  g.fillStyle=gr; g.fillText(text,x,y); g.restore();
+}
+function buildWall(w,h){
+  const c=document.createElement('canvas'); c.width=w; c.height=h; const g=c.getContext('2d');
+  g.fillStyle='#F7F4EE'; g.fillRect(0,0,w,h);
+  const cell=Math.round(w/3.4), colW=cell, rowH=cell*.72;
+  const cols=Math.ceil(w/colW)+1, headerH=h*.24;
+  for(let r=0; r*rowH<h-headerH; r++){ const y=headerH+ r*rowH + rowH*.55, off=(r%2)*colW/2;
+    for(let cI=-1; cI<cols; cI++){ const x=cI*colW+off+colW*.5;
+      crown(g,x,y-rowH*.30,cell*.017);
+      goldText(g,'VIP',x,y,cell*.30);
+      star(g,x+colW/2,y-rowH*.02,cell*.055);
+    }
+  }
+  // header: real gold Pepe's logo, flanked by stars, gold rail beneath
+  g.fillStyle='#F7F4EE'; g.fillRect(0,0,w,headerH-6);
+  const gl=getGoldLogo();
+  if(gl){ const lw=w*.5, lh=lw*gl.naturalHeight/gl.naturalWidth; g.drawImage(gl,(w-lw)/2, headerH*.5-lh, lw, lh); }
+  star(g,w*.10,headerH*.42,cell*.10); star(g,w*.90,headerH*.42,cell*.10);
+  g.fillStyle='#C9A227'; g.fillRect(0,headerH-6,w,7);
+  return c;
+}
+
+/* ---- Angel wings: drawn as a feathered shape, gold-white gradient ---- */
+function wingPath(g,len,wid){
+  // one wing, root at (0,0), pointing up-and-out to the right; mirror via scale(-1,1) for the left wing
+  g.beginPath();
+  g.moveTo(0,0);
+  g.bezierCurveTo(len*.25,-wid*.10, len*.65,-wid*.28, len*.98,-wid*.15);
+  g.bezierCurveTo(len*.80,-wid*.02, len*.62,wid*.05, len*.48,wid*.12);
+  g.bezierCurveTo(len*.62,wid*.18, len*.78,wid*.30, len*.90,wid*.46);
+  g.bezierCurveTo(len*.68,wid*.34, len*.50,wid*.30, len*.34,wid*.30);
+  g.bezierCurveTo(len*.44,wid*.42, len*.52,wid*.56, len*.56,wid*.72);
+  g.bezierCurveTo(len*.34,wid*.52, len*.16,wid*.40, len*.04,wid*.34);
+  g.bezierCurveTo(len*.02,wid*.20, 0,wid*.08, 0,0);
+  g.closePath();
+}
+function buildWingSprite(len,wid){
+  const pad=wid*.4;
+  const c=document.createElement('canvas'); c.width=len+pad; c.height=wid*1.6+pad; const g=c.getContext('2d');
+  g.translate(pad*.3, wid*.8+pad*.3);
+  const grad=g.createLinearGradient(0,-wid*.3,len,wid*.6);
+  grad.addColorStop(0,'#FFFDF5'); grad.addColorStop(.4,'#F3D785'); grad.addColorStop(.75,'#D9AF3E'); grad.addColorStop(1,'#A9811F');
+  g.save(); wingPath(g,len,wid); g.fillStyle=grad; g.shadowColor='rgba(0,0,0,.35)'; g.shadowBlur=len*.05; g.shadowOffsetX=len*.01; g.fill(); g.restore();
+  // feather strokes for texture
+  g.save(); wingPath(g,len,wid); g.clip();
+  g.strokeStyle='rgba(138,107,20,.55)'; g.lineWidth=Math.max(1,len*.008);
+  for(let i=1;i<=7;i++){ const t=i/8; g.beginPath(); g.moveTo(len*t*.9,-wid*.2+t*wid*.1); g.quadraticCurveTo(len*t, wid*(.15+t*.5), len*t*.75, wid*(.5+t*.5)); g.stroke(); }
+  g.restore();
+  g.save(); wingPath(g,len,wid); g.strokeStyle='rgba(122,92,16,.8)'; g.lineWidth=Math.max(1.2,len*.01); g.stroke(); g.restore();
+  return {canvas:c, originX:pad*.3, originY:wid*.8+pad*.3};
+}
+let wingSprite=null;
+function getWingSprite(refLen){
+  if(!wingSprite || Math.abs(wingSprite.len-refLen)>refLen*.3){ wingSprite={...buildWingSprite(refLen,refLen*.62), len:refLen}; }
+  return wingSprite;
+}
+function drawWings(g,w,h,lm){
+  if(!lm) return;
+  const L=lm[11], R=lm[12]; // left/right shoulder (mediapipe pose)
+  if(!L||!R||(L.visibility!==undefined&&L.visibility<0.3)||(R.visibility!==undefined&&R.visibility<0.3)) return;
+  const Lx=L.x*w, Ly=L.y*h, Rx=R.x*w, Ry=R.y*h;
+  const midX=(Lx+Rx)/2, midY=(Ly+Ry)/2 - Math.hypot(Rx-Lx,Ry-Ly)*0.08;
+  const shoulderW=Math.hypot(Rx-Lx,Ry-Ly);
+  const angle=Math.atan2(Ry-Ly,Rx-Lx);
+  if(!wingsAttachTime) wingsAttachTime=performance.now();
+  const t=Math.min(1,(performance.now()-wingsAttachTime)/1100);
+  const eased=1-Math.pow(1-t,3);
+  const len=shoulderW*2.0, wid=shoulderW*1.25;
+  const spr=getWingSprite(len);
+  const scale=0.25+0.75*eased, alpha=eased;
+  g.save();
+  g.globalAlpha=alpha;
+  g.translate(midX,midY);
+  g.rotate(angle*0.35); // slight tilt toward shoulder line, not full rotation
+  g.scale(scale,scale);
+  // right wing
+  g.save(); g.drawImage(spr.canvas,-spr.originX,-spr.originY); g.restore();
+  // left wing (mirror)
+  g.save(); g.scale(-1,1); g.drawImage(spr.canvas,-spr.originX,-spr.originY); g.restore();
+  g.restore();
+}
+
+function drawOverlay(g,w,h){
+  // just the Pepe's logo in the corner — real room fully visible, no header band
+  if(logo.complete&&logo.naturalWidth){ const lw=w*.30, lh=lw*logo.naturalHeight/logo.naturalWidth; g.save(); g.globalAlpha=.92; g.drawImage(logo,w-lw-w*.04,h-lh-h*.06,lw,lh); g.restore(); }
+}
+
+const loadingBadge=document.getElementById('loadingBadge');
+function render(){
+  if(!running) return;
+  lastRenderFrame++;
+  const w=out.width,h=out.height;
+  const needsMask = mode==='vip' || mode==='wings';
+  const needsPose = mode==='wings';
+  if((needsMask&&!mask) || (needsPose&&!poseLandmarks)) loadingBadge.classList.remove('hidden'); else loadingBadge.classList.add('hidden');
+  ctx.save();
+  if(facing==='user'){ ctx.translate(w,0); ctx.scale(-1,1); }
+  if(mode==='vip'&&mask){
+    ctx.drawImage(mask,0,0,w,h);                   // person mask
+    ctx.globalCompositeOperation='source-in';
+    ctx.drawImage(video,0,0,w,h);                  // person pixels
+    ctx.globalCompositeOperation='destination-over';
+    ctx.drawImage(wallCanvas,0,0,w,h);             // wall behind
+    ctx.globalCompositeOperation='source-over';
+  } else if(mode==='wings'){
+    ctx.drawImage(video,0,0,w,h);                  // real room background
+    drawWings(ctx,w,h,poseLandmarks);              // wings behind the person
+    if(mask){
+      if(!personBuf){ personBuf=document.createElement('canvas'); personBufCtx=personBuf.getContext('2d'); }
+      if(personBuf.width!==w||personBuf.height!==h){ personBuf.width=w; personBuf.height=h; }
+      personBufCtx.clearRect(0,0,w,h);
+      personBufCtx.drawImage(mask,0,0,w,h);
+      personBufCtx.globalCompositeOperation='source-in';
+      personBufCtx.drawImage(video,0,0,w,h);
+      personBufCtx.globalCompositeOperation='source-over';
+      ctx.drawImage(personBuf,0,0,w,h);            // person on top, in front of wing roots
+    }
+  } else {
+    ctx.drawImage(video,0,0,w,h);
+  }
+  ctx.restore();
+  if(mode==='overlay') drawOverlay(ctx,w,h);
+  requestAnimationFrame(render);
+}
+
+async function startCamera(){
+  gateBtn.disabled=true; gateBtn.textContent="Opening…";
+  try{
+    if(stream) stream.getTracks().forEach(t=>t.stop());
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facing,width:{ideal:1080},height:{ideal:1920}},audio:false});
+    video.srcObject=stream; await video.play();
+    out.width=video.videoWidth||1080; out.height=video.videoHeight||1920;
+    wallCanvas=buildWall(out.width,out.height);
+    if(!seg){
+      seg=new SelfieSegmentation({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/${f}`});
+      seg.setOptions({modelSelection:1,selfieMode:false});
+      seg.onResults(r=>{ mask=r.segmentationMask; });
+      const pump=async()=>{ if(!running) return; if(mode==='vip'||mode==='wings'){ segSkip=(segSkip+1)%SEG_EVERY; if(segSkip===0){ try{ await seg.send({image:getProcFrame()}); }catch(e){} } } requestAnimationFrame(pump); };
+      running=true; pump();
+    }
+    running=true; gate.classList.add('hidden'); render();
+  }catch(e){ gateBtn.disabled=false; gateBtn.textContent="Try again"; gateMsg.textContent="Camera access is needed. Allow it and try again."; }
+}
+
+document.getElementById('mVip').onclick=e=>{mode='vip';setSeg(e.target);};
+document.getElementById('mOverlay').onclick=e=>{mode='overlay';setSeg(e.target);};
+function ensurePose(){
+  if(pose) return;
+  pose=new Pose({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/${f}`});
+  pose.setOptions({modelComplexity:0,smoothLandmarks:true,enableSegmentation:false,minDetectionConfidence:0.5,minTrackingConfidence:0.5});
+  pose.onResults(r=>{ if(r.poseLandmarks) poseLandmarks=r.poseLandmarks; else { poseLandmarks=null; wingsAttachTime=null; } });
+  const pumpPose=async()=>{ if(!running) return; if(mode==='wings'){ poseSkip=(poseSkip+1)%POSE_EVERY; if(poseSkip===0){ try{ await pose.send({image:getProcFrame()}); }catch(e){} } } requestAnimationFrame(pumpPose); };
+  pumpPose();
+}
+document.getElementById('mWings').onclick=e=>{mode='wings';wingsAttachTime=null;setSeg(e.target);ensurePose();};
+function setSeg(b){ document.querySelectorAll('.seg button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); }
+document.getElementById('flip').onclick=()=>{ facing=facing==='user'?'environment':'user'; startCamera(); };
+
+document.getElementById('shutter').onclick=()=>{
+  out.toBlob(b=>{ lastShot=b; shotImg.src=URL.createObjectURL(b); review.style.display='flex'; },'image/jpeg',.92);
+};
+document.getElementById('retake').onclick=()=>{ review.style.display='none'; };
+document.getElementById('save').onclick=()=>{ const a=document.createElement('a'); a.href=shotImg.src; a.download='pepes-vip.jpg'; a.click(); };
+document.getElementById('share').onclick=async()=>{
+  const file=new File([lastShot],'pepes-vip.jpg',{type:'image/jpeg'});
+  if(navigator.canShare&&navigator.canShare({files:[file]})) await navigator.share({files:[file],title:"Welcome to Pepe's"});
+  else alert("Sharing isn't supported here. Use Save instead.");
+};
+
+checkGate();
+</script>
+</body>
+</html>
