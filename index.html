@@ -92,6 +92,15 @@ const TV_BASE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${TV_VERSI
 const SEG_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter_landscape/float16/latest/selfie_segmenter_landscape.tflite";
 const POSE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task";
 let tvLib=null, visionFileset=null;
+// Guards against a MediaPipe task that hangs forever instead of throwing
+// (seen with a second concurrent GPU-backed task on iPhone Safari) — turns
+// a silent hang into a real, reportable error after `ms`.
+function withTimeout(promise, ms, label){
+  return Promise.race([
+    promise,
+    new Promise((_,reject)=>setTimeout(()=>reject(new Error(label+' timed out after '+Math.round(ms/1000)+'s')), ms))
+  ]);
+}
 async function loadTasksVision(){
   if(!tvLib) tvLib=await import(`${TV_BASE}/vision_bundle.mjs`);
   if(!visionFileset) visionFileset=await tvLib.FilesetResolver.forVisionTasks(`${TV_BASE}/wasm`);
@@ -176,8 +185,8 @@ async function ensureSegmenter(){
   try{
     const tv=await loadTasksVision();
     const opts={baseOptions:{modelAssetPath:SEG_MODEL_URL,delegate:"GPU"},canvas:document.createElement('canvas'),runningMode:"VIDEO",outputConfidenceMasks:true,outputCategoryMask:false};
-    try{ imageSegmenter=await tv.ImageSegmenter.createFromOptions(visionFileset,opts); }
-    catch(gpuErr){ opts.baseOptions.delegate="CPU"; delete opts.canvas; imageSegmenter=await tv.ImageSegmenter.createFromOptions(visionFileset,opts); }
+    try{ imageSegmenter=await withTimeout(tv.ImageSegmenter.createFromOptions(visionFileset,opts),20000,'Background model load'); }
+    catch(gpuErr){ opts.baseOptions.delegate="CPU"; delete opts.canvas; imageSegmenter=await withTimeout(tv.ImageSegmenter.createFromOptions(visionFileset,opts),20000,'Background model load (CPU)'); }
   }catch(e){ segStatus='error'; segErrMsg=(e&&e.message)||String(e); }
 }
 function processSegmentationTick(){
@@ -194,9 +203,12 @@ async function ensurePoseModel(){
   poseStatus='loading model…';
   try{
     const tv=await loadTasksVision();
-    const opts={baseOptions:{modelAssetPath:POSE_MODEL_URL,delegate:"GPU"},canvas:document.createElement('canvas'),runningMode:"VIDEO",numPoses:1};
-    try{ poseLandmarker=await tv.PoseLandmarker.createFromOptions(visionFileset,opts); }
-    catch(gpuErr){ opts.baseOptions.delegate="CPU"; delete opts.canvas; poseLandmarker=await tv.PoseLandmarker.createFromOptions(visionFileset,opts); }
+    // CPU delegate on purpose: the background-removal effect already holds a GPU
+    // slot, and iPhone Safari allows only a handful of GPU (WebGL) contexts at
+    // once. A second GPU-backed task here didn't error, it just hung forever —
+    // CPU avoids the conflict entirely, and pose tracking is light enough for it.
+    const opts={baseOptions:{modelAssetPath:POSE_MODEL_URL,delegate:"CPU"},runningMode:"VIDEO",numPoses:1};
+    poseLandmarker=await withTimeout(tv.PoseLandmarker.createFromOptions(visionFileset,opts),20000,'Wings model load');
   }catch(e){ poseStatus='error'; poseErrMsg=(e&&e.message)||String(e); }
 }
 function processPoseTick(){
