@@ -210,8 +210,12 @@ async function ensurePoseModel(){
     // slot, and iPhone Safari allows only a handful of GPU (WebGL) contexts at
     // once. A second GPU-backed task here didn't error, it just hung forever —
     // CPU avoids the conflict entirely, and pose tracking is light enough for it.
-    const opts={baseOptions:{modelAssetPath:POSE_MODEL_URL,delegate:"CPU"},runningMode:"VIDEO",numPoses:1};
+    // Lower thresholds than the default 0.5 — close-up photo-booth framing often
+    // doesn't show a full body, and the default was likely too strict to ever
+    // confirm a pose, which is indistinguishable from "still loading" below.
+    const opts={baseOptions:{modelAssetPath:POSE_MODEL_URL,delegate:"CPU"},runningMode:"VIDEO",numPoses:1,minPoseDetectionConfidence:0.3,minPosePresenceConfidence:0.3,minTrackingConfidence:0.3};
     poseLandmarker=await withTimeout(tv.PoseLandmarker.createFromOptions(visionFileset,opts),20000,'Wings model load');
+    poseStatus='model-ready'; // loaded successfully; may still say "no person found" per-frame below
   }catch(e){ poseStatus='error'; poseErrMsg=(e&&e.message)||String(e); }
 }
 function processPoseTick(){
@@ -219,7 +223,7 @@ function processPoseTick(){
   try{
     const result=poseLandmarker.detectForVideo(getProcFrame(),performance.now());
     if(result.landmarks&&result.landmarks[0]&&result.landmarks[0].length){ poseLandmarks=result.landmarks[0]; poseStatus='ready'; }
-    else { poseLandmarks=null; wingsAttachTime=null; }
+    else { poseLandmarks=null; wingsAttachTime=null; poseStatus='no-person'; }
   }catch(e){ poseStatus='error'; poseErrMsg=(e&&e.message)||String(e); }
 }
 
@@ -367,6 +371,7 @@ function render(){
   if(needsPose && !poseLandmarks){
     let wMsg;
     if(poseStatus==='error') wMsg='Wings error: '+poseErrMsg;
+    else if(poseStatus==='no-person') wMsg='Step back so your shoulders are fully in frame.';
     else if(poseSendAt && performance.now()-poseSendAt>9000) wMsg='Wings stuck loading (no response after 9s).';
     else wMsg='Loading wings…';
     badgeMsg = badgeMsg ? badgeMsg+' | '+wMsg : wMsg;
