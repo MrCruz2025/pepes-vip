@@ -224,10 +224,7 @@ function drawWings(g,w,h,lm){
 }
 
 function drawOverlay(g,w,h){
-  // corner branding over the real room — keeps the room visible, no full-frame wash
-  if(!wallCanvas) return;
-  const bandH=h*.24;
-  g.save(); g.globalAlpha=.94; g.drawImage(wallCanvas,0,0,w,bandH,0,0,w,bandH); g.restore();
+  // just the Pepe's logo in the corner — real room fully visible, no header band
   if(logo.complete&&logo.naturalWidth){ const lw=w*.30, lh=lw*logo.naturalHeight/logo.naturalWidth; g.save(); g.globalAlpha=.92; g.drawImage(logo,w-lw-w*.04,h-lh-h*.06,lw,lh); g.restore(); }
 }
 
@@ -280,14 +277,14 @@ async function startCamera(){
       seg=new SelfieSegmentation({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/${f}`});
       seg.setOptions({modelSelection:1,selfieMode:false});
       seg.onResults(r=>{ mask=r.segmentationMask; });
-      const pump=async()=>{ if(!running) return; try{ await seg.send({image:video}); }catch(e){} requestAnimationFrame(pump); };
+      const pump=async()=>{ if(!running) return; if(mode==='vip'||mode==='wings'){ try{ await seg.send({image:video}); }catch(e){} } requestAnimationFrame(pump); };
       running=true; pump();
     }
     if(!pose){
       pose=new Pose({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/${f}`});
       pose.setOptions({modelComplexity:1,smoothLandmarks:true,enableSegmentation:false,minDetectionConfidence:0.5,minTrackingConfidence:0.5});
       pose.onResults(r=>{ if(r.poseLandmarks) poseLandmarks=r.poseLandmarks; else { poseLandmarks=null; wingsAttachTime=null; } });
-      const pumpPose=async()=>{ if(!running) return; try{ await pose.send({image:video}); }catch(e){} requestAnimationFrame(pumpPose); };
+      const pumpPose=async()=>{ if(!running) return; if(mode==='wings'){ try{ await pose.send({image:video}); }catch(e){} } requestAnimationFrame(pumpPose); };
       pumpPose();
     }
     running=true; gate.classList.add('hidden'); render();
