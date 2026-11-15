@@ -81,9 +81,22 @@
   </div>
 </section>
 
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/selfie_segmentation.js" onerror="window.__segScriptFailed=true"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/pose.js" onerror="window.__poseScriptFailed=true"></script>
-<script>
+<script type="module">
+/* Using @mediapipe/tasks-vision (Google's current, maintained vision library) —
+   replaces the discontinued @mediapipe/selfie_segmentation + @mediapipe/pose
+   "Solutions" API, which is no longer updated and has known reliability issues
+   on mobile Safari (the freezing / stuck-loading / runs-but-shows-nothing bugs
+   we kept hitting). */
+const TV_VERSION = "1.2.3";
+const TV_BASE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${TV_VERSION}`;
+const SEG_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter_landscape/float16/latest/selfie_segmenter_landscape.tflite";
+const POSE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task";
+let tvLib=null, visionFileset=null;
+async function loadTasksVision(){
+  if(!tvLib) tvLib=await import(`${TV_BASE}/vision_bundle.mjs`);
+  if(!visionFileset) visionFileset=await tvLib.FilesetResolver.forVisionTasks(`${TV_BASE}/wasm`);
+  return tvLib;
+}
 /* ================== SETTINGS — edit these ================== */
 const SECRET_KEY   = "pepesvip2026";        // QR link must include ?key=pepesvip2026
 const PEPES_LAT    = 45.4972562;            // 4908 SE Powell Blvd
@@ -96,9 +109,10 @@ const LOGO_SRC     = "pepes-logo.png";
 const gate=document.getElementById('gate'), gateMsg=document.getElementById('gateMsg'), gateBtn=document.getElementById('gateBtn');
 const video=document.getElementById('cam'), out=document.getElementById('out'), ctx=out.getContext('2d');
 const review=document.getElementById('review'), shotImg=document.getElementById('shot');
-let mode='vip', facing='user', stream=null, seg=null, mask=null, wallCanvas=null, logo=new Image(), running=false, lastShot=null;
-let pose=null, poseLandmarks=null, wingsAttachTime=null, personBuf=null, personBufCtx=null;
+let mode='vip', facing='user', stream=null, imageSegmenter=null, mask=null, wallCanvas=null, logo=new Image(), running=false, lastShot=null;
+let poseLandmarker=null, poseLandmarks=null, wingsAttachTime=null, personBuf=null, personBufCtx=null;
 let segStatus='idle', poseStatus='idle', segErrMsg='', poseErrMsg='', segSendAt=0, poseSendAt=0;
+let maskWorkCanvas=null, maskWorkCtx=null;
 // shared downscaled frame for ML inference — much faster than feeding full-res video
 const PROC_W=256;
 const procCanvas=document.createElement('canvas'), procCtx=procCanvas.getContext('2d');
@@ -137,6 +151,62 @@ function getProcFrame(){
 let segSkip=0, poseSkip=0;
 const SEG_EVERY=2, POSE_EVERY=2; // run inference every Nth loop tick
 logo.src=LOGO_SRC;
+
+// Converts an MPMask confidence mask (0..1 per pixel) into a small alpha-only
+// canvas we can drop straight into the existing source-in/destination-over
+// compositing below, exactly like the old segmentationMask was used.
+function maskToCanvas(mpMask){
+  const w=mpMask.width, h=mpMask.height;
+  const data=mpMask.getAsFloat32Array();
+  if(!maskWorkCanvas){ maskWorkCanvas=document.createElement('canvas'); maskWorkCtx=maskWorkCanvas.getContext('2d'); }
+  if(maskWorkCanvas.width!==w||maskWorkCanvas.height!==h){ maskWorkCanvas.width=w; maskWorkCanvas.height=h; }
+  const imgData=maskWorkCtx.createImageData(w,h);
+  const px=imgData.data;
+  for(let i=0;i<data.length;i++){
+    const o=i*4, a=data[i]<=0?0:data[i]>=1?255:(data[i]*255)|0;
+    px[o]=255; px[o+1]=255; px[o+2]=255; px[o+3]=a;
+  }
+  maskWorkCtx.putImageData(imgData,0,0);
+  return maskWorkCanvas;
+}
+
+async function ensureSegmenter(){
+  if(imageSegmenter) return;
+  segStatus='loading model…';
+  try{
+    const tv=await loadTasksVision();
+    const opts={baseOptions:{modelAssetPath:SEG_MODEL_URL,delegate:"GPU"},canvas:document.createElement('canvas'),runningMode:"VIDEO",outputConfidenceMasks:true,outputCategoryMask:false};
+    try{ imageSegmenter=await tv.ImageSegmenter.createFromOptions(visionFileset,opts); }
+    catch(gpuErr){ opts.baseOptions.delegate="CPU"; delete opts.canvas; imageSegmenter=await tv.ImageSegmenter.createFromOptions(visionFileset,opts); }
+  }catch(e){ segStatus='error'; segErrMsg=(e&&e.message)||String(e); }
+}
+function processSegmentationTick(){
+  if(!imageSegmenter) return;
+  try{
+    const result=imageSegmenter.segmentForVideo(getProcFrame(),performance.now());
+    const cm=result.confidenceMasks&&result.confidenceMasks[0];
+    if(cm){ mask=maskToCanvas(cm); cm.close(); segStatus='ready'; }
+  }catch(e){ segStatus='error'; segErrMsg=(e&&e.message)||String(e); }
+}
+
+async function ensurePoseModel(){
+  if(poseLandmarker) return;
+  poseStatus='loading model…';
+  try{
+    const tv=await loadTasksVision();
+    const opts={baseOptions:{modelAssetPath:POSE_MODEL_URL,delegate:"GPU"},canvas:document.createElement('canvas'),runningMode:"VIDEO",numPoses:1};
+    try{ poseLandmarker=await tv.PoseLandmarker.createFromOptions(visionFileset,opts); }
+    catch(gpuErr){ opts.baseOptions.delegate="CPU"; delete opts.canvas; poseLandmarker=await tv.PoseLandmarker.createFromOptions(visionFileset,opts); }
+  }catch(e){ poseStatus='error'; poseErrMsg=(e&&e.message)||String(e); }
+}
+function processPoseTick(){
+  if(!poseLandmarker) return;
+  try{
+    const result=poseLandmarker.detectForVideo(getProcFrame(),performance.now());
+    if(result.landmarks&&result.landmarks[0]&&result.landmarks[0].length){ poseLandmarks=result.landmarks[0]; poseStatus='ready'; }
+    else { poseLandmarks=null; wingsAttachTime=null; }
+  }catch(e){ poseStatus='error'; poseErrMsg=(e&&e.message)||String(e); }
+}
 
 function dist(lat1,lng1,lat2,lng2){const R=6371000,toR=x=>x*Math.PI/180;const dLat=toR(lat2-lat1),dLng=toR(lng2-lng1);const a=Math.sin(dLat/2)**2+Math.cos(toR(lat1))*Math.cos(toR(lat2))*Math.sin(dLng/2)**2;return 2*R*Math.asin(Math.sqrt(a));}
 
@@ -275,15 +345,13 @@ function render(){
   const needsPose = mode==='wings';
   let badgeMsg='';
   if(needsMask && !mask){
-    if(window.__segScriptFailed) badgeMsg='Background effect blocked — could not load from the internet. Try different wifi/data.';
-    else if(segStatus==='error') badgeMsg='Background effect error: '+segErrMsg;
+    if(segStatus==='error') badgeMsg='Background effect error: '+segErrMsg;
     else if(segSendAt && performance.now()-segSendAt>9000) badgeMsg='Background effect stuck loading (no response after 9s).';
     else badgeMsg='Loading background effect…';
   }
   if(needsPose && !poseLandmarks){
     let wMsg;
-    if(window.__poseScriptFailed) wMsg='Wings blocked — could not load from the internet.';
-    else if(poseStatus==='error') wMsg='Wings error: '+poseErrMsg;
+    if(poseStatus==='error') wMsg='Wings error: '+poseErrMsg;
     else if(poseSendAt && performance.now()-poseSendAt>9000) wMsg='Wings stuck loading (no response after 9s).';
     else wMsg='Loading wings…';
     badgeMsg = badgeMsg ? badgeMsg+' | '+wMsg : wMsg;
@@ -327,15 +395,10 @@ async function startCamera(){
     video.srcObject=stream; await video.play();
     out.width=video.videoWidth||1080; out.height=video.videoHeight||1920;
     wallCanvas=buildWall(out.width,out.height);
-    if(!seg){
-      try{
-        segStatus='loading model…';
-        seg=new SelfieSegmentation({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/${f}`});
-        seg.setOptions({modelSelection:1,selfieMode:false});
-        seg.onResults(r=>{ mask=r.segmentationMask; segStatus='ready'; });
-        const pump=async()=>{ if(!running) return; if(mode==='vip'||mode==='wings'){ segSkip=(segSkip+1)%SEG_EVERY; if(segSkip===0){ if(!segSendAt) segSendAt=performance.now(); try{ await seg.send({image:getProcFrame()}); }catch(e){ segStatus='error'; segErrMsg=(e&&e.message)||String(e); } } } requestAnimationFrame(pump); };
-        running=true; pump();
-      }catch(e){ segStatus='error'; segErrMsg=(e&&e.message)||String(e); }
+    if(!imageSegmenter && segStatus==='idle'){
+      ensureSegmenter();
+      const pump=()=>{ if(!running) return; if(mode==='vip'||mode==='wings'){ segSkip=(segSkip+1)%SEG_EVERY; if(segSkip===0){ if(!segSendAt) segSendAt=performance.now(); processSegmentationTick(); } } requestAnimationFrame(pump); };
+      running=true; pump();
     }
     running=true; gate.classList.add('hidden'); render();
   }catch(e){ gateBtn.disabled=false; gateBtn.textContent="Try again"; gateMsg.textContent="Camera access is needed. Allow it and try again."; }
@@ -344,15 +407,10 @@ async function startCamera(){
 document.getElementById('mVip').onclick=e=>{mode='vip';setSeg(e.target);};
 document.getElementById('mOverlay').onclick=e=>{mode='overlay';setSeg(e.target);};
 function ensurePose(){
-  if(pose) return;
-  try{
-    poseStatus='loading model…';
-    pose=new Pose({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/${f}`});
-    pose.setOptions({modelComplexity:0,smoothLandmarks:true,enableSegmentation:false,minDetectionConfidence:0.5,minTrackingConfidence:0.5});
-    pose.onResults(r=>{ if(r.poseLandmarks){ poseLandmarks=r.poseLandmarks; poseStatus='ready'; } else { poseLandmarks=null; wingsAttachTime=null; } });
-    const pumpPose=async()=>{ if(!running) return; if(mode==='wings'){ poseSkip=(poseSkip+1)%POSE_EVERY; if(poseSkip===0){ if(!poseSendAt) poseSendAt=performance.now(); try{ await pose.send({image:getProcFrame()}); }catch(e){ poseStatus='error'; poseErrMsg=(e&&e.message)||String(e); } } } requestAnimationFrame(pumpPose); };
-    pumpPose();
-  }catch(e){ poseStatus='error'; poseErrMsg=(e&&e.message)||String(e); }
+  if(poseLandmarker || poseStatus!=='idle') return;
+  ensurePoseModel();
+  const pumpPose=()=>{ if(!running) return; if(mode==='wings'){ poseSkip=(poseSkip+1)%POSE_EVERY; if(poseSkip===0){ if(!poseSendAt) poseSendAt=performance.now(); processPoseTick(); } } requestAnimationFrame(pumpPose); };
+  pumpPose();
 }
 document.getElementById('mWings').onclick=e=>{mode='wings';wingsAttachTime=null;setSeg(e.target);ensurePose();};
 function setSeg(b){ document.querySelectorAll('.seg button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); }
