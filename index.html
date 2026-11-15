@@ -161,9 +161,8 @@ function buildWall(w,h){
 }
 
 function drawOverlay(g,w,h){
-  // subtle corner branding over the real room — keeps the room visible
+  // corner branding over the real room — keeps the room visible, no full-frame wash
   if(!wallCanvas) return;
-  g.save(); g.globalAlpha=.10; g.globalCompositeOperation='multiply'; g.drawImage(wallCanvas,0,0,w,h); g.restore();
   const bandH=h*.24;
   g.save(); g.globalAlpha=.94; g.drawImage(wallCanvas,0,0,w,bandH,0,0,w,bandH); g.restore();
   if(logo.complete&&logo.naturalWidth){ const lw=w*.30, lh=lw*logo.naturalHeight/logo.naturalWidth; g.save(); g.globalAlpha=.92; g.drawImage(logo,w-lw-w*.04,h-lh-h*.06,lw,lh); g.restore(); }
