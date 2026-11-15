@@ -15,8 +15,8 @@
   .ui{ position:fixed; left:0; right:0; padding:0 16px; display:flex; flex-direction:column; align-items:center; gap:12px; z-index:5; }
   .top{ top:calc(env(safe-area-inset-top) + 10px); gap:8px; }
   .bottom{ bottom:calc(env(safe-area-inset-bottom) + 18px); }
-  .seg{ display:flex; background:rgba(11,10,8,.75); border:1px solid var(--gold-dark); border-radius:999px; padding:4px; backdrop-filter:blur(8px); }
-  .seg button{ appearance:none; border:0; background:transparent; color:var(--ink); font:500 14px Inter,sans-serif; padding:9px 18px; border-radius:999px; }
+  .seg{ display:flex; flex-wrap:wrap; justify-content:center; background:rgba(11,10,8,.75); border:1px solid var(--gold-dark); border-radius:999px; padding:4px; backdrop-filter:blur(8px); max-width:94vw; }
+  .seg button{ appearance:none; border:0; background:transparent; color:var(--ink); font:500 13px Inter,sans-serif; padding:9px 14px; border-radius:999px; white-space:nowrap; }
   .seg button.on{ background:var(--gold); color:var(--black); }
   #shutter{ width:76px; height:76px; border-radius:50%; border:4px solid var(--gold); background:rgba(11,10,8,.4); position:relative; }
   #shutter::after{ content:""; position:absolute; inset:7px; border-radius:50%; background:var(--gold-light); }
@@ -57,6 +57,7 @@
   <div class="seg">
     <button id="mVip" class="on">VIP wall</button>
     <button id="mOverlay">Overlay</button>
+    <button id="mWings">Angel Wings</button>
   </div>
 </div>
 
@@ -81,6 +82,7 @@
 </section>
 
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/selfie_segmentation.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/pose.js"></script>
 <script>
 /* ================== SETTINGS — edit these ================== */
 const SECRET_KEY   = "pepesvip2026";        // QR link must include ?key=pepesvip2026
@@ -95,6 +97,7 @@ const gate=document.getElementById('gate'), gateMsg=document.getElementById('gat
 const video=document.getElementById('cam'), out=document.getElementById('out'), ctx=out.getContext('2d');
 const review=document.getElementById('review'), shotImg=document.getElementById('shot');
 let mode='vip', facing='user', stream=null, seg=null, mask=null, wallCanvas=null, logo=new Image(), running=false, lastShot=null;
+let pose=null, poseLandmarks=null, wingsAttachTime=null, personBuf=null, personBufCtx=null;
 logo.src=LOGO_SRC;
 
 function dist(lat1,lng1,lat2,lng2){const R=6371000,toR=x=>x*Math.PI/180;const dLat=toR(lat2-lat1),dLng=toR(lng2-lng1);const a=Math.sin(dLat/2)**2+Math.cos(toR(lat1))*Math.cos(toR(lat2))*Math.sin(dLng/2)**2;return 2*R*Math.asin(Math.sqrt(a));}
@@ -160,6 +163,66 @@ function buildWall(w,h){
   return c;
 }
 
+/* ---- Angel wings: drawn as a feathered shape, gold-white gradient ---- */
+function wingPath(g,len,wid){
+  // one wing, root at (0,0), pointing up-and-out to the right; mirror via scale(-1,1) for the left wing
+  g.beginPath();
+  g.moveTo(0,0);
+  g.bezierCurveTo(len*.25,-wid*.10, len*.65,-wid*.28, len*.98,-wid*.15);
+  g.bezierCurveTo(len*.80,-wid*.02, len*.62,wid*.05, len*.48,wid*.12);
+  g.bezierCurveTo(len*.62,wid*.18, len*.78,wid*.30, len*.90,wid*.46);
+  g.bezierCurveTo(len*.68,wid*.34, len*.50,wid*.30, len*.34,wid*.30);
+  g.bezierCurveTo(len*.44,wid*.42, len*.52,wid*.56, len*.56,wid*.72);
+  g.bezierCurveTo(len*.34,wid*.52, len*.16,wid*.40, len*.04,wid*.34);
+  g.bezierCurveTo(len*.02,wid*.20, 0,wid*.08, 0,0);
+  g.closePath();
+}
+function buildWingSprite(len,wid){
+  const pad=wid*.4;
+  const c=document.createElement('canvas'); c.width=len+pad; c.height=wid*1.6+pad; const g=c.getContext('2d');
+  g.translate(pad*.3, wid*.8+pad*.3);
+  const grad=g.createLinearGradient(0,-wid*.3,len,wid*.6);
+  grad.addColorStop(0,'#FFFDF5'); grad.addColorStop(.4,'#F3D785'); grad.addColorStop(.75,'#D9AF3E'); grad.addColorStop(1,'#A9811F');
+  g.save(); wingPath(g,len,wid); g.fillStyle=grad; g.shadowColor='rgba(0,0,0,.35)'; g.shadowBlur=len*.05; g.shadowOffsetX=len*.01; g.fill(); g.restore();
+  // feather strokes for texture
+  g.save(); wingPath(g,len,wid); g.clip();
+  g.strokeStyle='rgba(138,107,20,.55)'; g.lineWidth=Math.max(1,len*.008);
+  for(let i=1;i<=7;i++){ const t=i/8; g.beginPath(); g.moveTo(len*t*.9,-wid*.2+t*wid*.1); g.quadraticCurveTo(len*t, wid*(.15+t*.5), len*t*.75, wid*(.5+t*.5)); g.stroke(); }
+  g.restore();
+  g.save(); wingPath(g,len,wid); g.strokeStyle='rgba(122,92,16,.8)'; g.lineWidth=Math.max(1.2,len*.01); g.stroke(); g.restore();
+  return {canvas:c, originX:pad*.3, originY:wid*.8+pad*.3};
+}
+let wingSprite=null;
+function getWingSprite(refLen){
+  if(!wingSprite || Math.abs(wingSprite.len-refLen)>refLen*.3){ wingSprite={...buildWingSprite(refLen,refLen*.62), len:refLen}; }
+  return wingSprite;
+}
+function drawWings(g,w,h,lm){
+  if(!lm) return;
+  const L=lm[11], R=lm[12]; // left/right shoulder (mediapipe pose)
+  if(!L||!R||(L.visibility!==undefined&&L.visibility<0.3)||(R.visibility!==undefined&&R.visibility<0.3)) return;
+  const Lx=L.x*w, Ly=L.y*h, Rx=R.x*w, Ry=R.y*h;
+  const midX=(Lx+Rx)/2, midY=(Ly+Ry)/2 - Math.hypot(Rx-Lx,Ry-Ly)*0.08;
+  const shoulderW=Math.hypot(Rx-Lx,Ry-Ly);
+  const angle=Math.atan2(Ry-Ly,Rx-Lx);
+  if(!wingsAttachTime) wingsAttachTime=performance.now();
+  const t=Math.min(1,(performance.now()-wingsAttachTime)/1100);
+  const eased=1-Math.pow(1-t,3);
+  const len=shoulderW*2.0, wid=shoulderW*1.25;
+  const spr=getWingSprite(len);
+  const scale=0.25+0.75*eased, alpha=eased;
+  g.save();
+  g.globalAlpha=alpha;
+  g.translate(midX,midY);
+  g.rotate(angle*0.35); // slight tilt toward shoulder line, not full rotation
+  g.scale(scale,scale);
+  // right wing
+  g.save(); g.drawImage(spr.canvas,-spr.originX,-spr.originY); g.restore();
+  // left wing (mirror)
+  g.save(); g.scale(-1,1); g.drawImage(spr.canvas,-spr.originX,-spr.originY); g.restore();
+  g.restore();
+}
+
 function drawOverlay(g,w,h){
   // corner branding over the real room — keeps the room visible, no full-frame wash
   if(!wallCanvas) return;
@@ -172,7 +235,9 @@ const loadingBadge=document.getElementById('loadingBadge');
 function render(){
   if(!running) return;
   const w=out.width,h=out.height;
-  if(mode==='vip'&&!mask) loadingBadge.classList.remove('hidden'); else loadingBadge.classList.add('hidden');
+  const needsMask = mode==='vip' || mode==='wings';
+  const needsPose = mode==='wings';
+  if((needsMask&&!mask) || (needsPose&&!poseLandmarks)) loadingBadge.classList.remove('hidden'); else loadingBadge.classList.add('hidden');
   ctx.save();
   if(facing==='user'){ ctx.translate(w,0); ctx.scale(-1,1); }
   if(mode==='vip'&&mask){
@@ -182,6 +247,19 @@ function render(){
     ctx.globalCompositeOperation='destination-over';
     ctx.drawImage(wallCanvas,0,0,w,h);             // wall behind
     ctx.globalCompositeOperation='source-over';
+  } else if(mode==='wings'){
+    ctx.drawImage(video,0,0,w,h);                  // real room background
+    drawWings(ctx,w,h,poseLandmarks);              // wings behind the person
+    if(mask){
+      if(!personBuf){ personBuf=document.createElement('canvas'); personBufCtx=personBuf.getContext('2d'); }
+      if(personBuf.width!==w||personBuf.height!==h){ personBuf.width=w; personBuf.height=h; }
+      personBufCtx.clearRect(0,0,w,h);
+      personBufCtx.drawImage(mask,0,0,w,h);
+      personBufCtx.globalCompositeOperation='source-in';
+      personBufCtx.drawImage(video,0,0,w,h);
+      personBufCtx.globalCompositeOperation='source-over';
+      ctx.drawImage(personBuf,0,0,w,h);            // person on top, in front of wing roots
+    }
   } else {
     ctx.drawImage(video,0,0,w,h);
   }
@@ -205,12 +283,20 @@ async function startCamera(){
       const pump=async()=>{ if(!running) return; try{ await seg.send({image:video}); }catch(e){} requestAnimationFrame(pump); };
       running=true; pump();
     }
+    if(!pose){
+      pose=new Pose({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/${f}`});
+      pose.setOptions({modelComplexity:1,smoothLandmarks:true,enableSegmentation:false,minDetectionConfidence:0.5,minTrackingConfidence:0.5});
+      pose.onResults(r=>{ if(r.poseLandmarks) poseLandmarks=r.poseLandmarks; else { poseLandmarks=null; wingsAttachTime=null; } });
+      const pumpPose=async()=>{ if(!running) return; try{ await pose.send({image:video}); }catch(e){} requestAnimationFrame(pumpPose); };
+      pumpPose();
+    }
     running=true; gate.classList.add('hidden'); render();
   }catch(e){ gateBtn.disabled=false; gateBtn.textContent="Try again"; gateMsg.textContent="Camera access is needed. Allow it and try again."; }
 }
 
 document.getElementById('mVip').onclick=e=>{mode='vip';setSeg(e.target);};
 document.getElementById('mOverlay').onclick=e=>{mode='overlay';setSeg(e.target);};
+document.getElementById('mWings').onclick=e=>{mode='wings';wingsAttachTime=null;setSeg(e.target);};
 function setSeg(b){ document.querySelectorAll('.seg button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); }
 document.getElementById('flip').onclick=()=>{ facing=facing==='user'?'environment':'user'; startCamera(); };
 
