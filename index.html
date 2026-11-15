@@ -103,12 +103,34 @@ let segStatus='idle', poseStatus='idle', segErrMsg='', poseErrMsg='', segSendAt=
 const PROC_W=256;
 const procCanvas=document.createElement('canvas'), procCtx=procCanvas.getContext('2d');
 let procFrameTick=-1, lastRenderFrame=-1;
+// Gray-world auto white balance — neutralizes strong color casts (blue/red/purple
+// stage & DJ lighting) in the frame we feed to the AI models, WITHOUT touching what
+// the camera/photo actually shows. The models were trained on normal lighting and
+// get confused by saturated colored light, which is why VIP wall / wings can fail
+// to see the person correctly under club lighting even though loading succeeded.
+function whiteBalance(c,w,h){
+  let d; try{ d=c.getImageData(0,0,w,h); }catch(e){ return; }
+  const px=d.data, n=w*h;
+  let rSum=0,gSum=0,bSum=0;
+  for(let i=0;i<px.length;i+=4){ rSum+=px[i]; gSum+=px[i+1]; bSum+=px[i+2]; }
+  const rAvg=rSum/n, gAvg=gSum/n, bAvg=bSum/n;
+  if(rAvg<2||gAvg<2||bAvg<2) return; // near-black frame, skip to avoid noise blowup
+  const gray=(rAvg+gAvg+bAvg)/3;
+  const rGain=Math.min(2.5,gray/rAvg), gGain=Math.min(2.5,gray/gAvg), bGain=Math.min(2.5,gray/bAvg);
+  for(let i=0;i<px.length;i+=4){
+    px[i]=Math.min(255,px[i]*rGain);
+    px[i+1]=Math.min(255,px[i+1]*gGain);
+    px[i+2]=Math.min(255,px[i+2]*bGain);
+  }
+  c.putImageData(d,0,0);
+}
 function getProcFrame(){
   if(procFrameTick===lastRenderFrame) return procCanvas; // already drawn this render tick
   const scale=PROC_W/(video.videoWidth||PROC_W);
   const pw=PROC_W, ph=Math.max(1,Math.round((video.videoHeight||PROC_W)*scale));
   if(procCanvas.width!==pw||procCanvas.height!==ph){ procCanvas.width=pw; procCanvas.height=ph; }
   procCtx.drawImage(video,0,0,pw,ph);
+  whiteBalance(procCtx,pw,ph);
   procFrameTick=lastRenderFrame;
   return procCanvas;
 }
