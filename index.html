@@ -89,8 +89,11 @@
    we kept hitting). */
 const TV_VERSION = "1.2.3";
 const TV_BASE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${TV_VERSION}`;
-const SEG_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter_landscape/float16/latest/selfie_segmenter_landscape.tflite";
-const POSE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task";
+// Self-hosted in this repo (same folder as the logo) instead of pulled live from
+// Google's servers each time — avoids depending on the restaurant's connection
+// to reach storage.googleapis.com, the same way the logo always loads reliably.
+const SEG_MODEL_URL = "selfie_segmenter_landscape.tflite";
+const POSE_MODEL_URL = "pose_landmarker_lite.task";
 let tvLib=null, visionFileset=null;
 // Guards against a MediaPipe task that hangs forever instead of throwing
 // (seen with a second concurrent GPU-backed task on iPhone Safari) — turns
