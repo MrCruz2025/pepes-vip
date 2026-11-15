@@ -34,7 +34,7 @@
   #review .ui{ z-index:11; }
   .hidden{ display:none !important; }
   .stars{ position:absolute; inset:0; pointer-events:none; opacity:.5; }
-  #loadingBadge{ position:fixed; top:calc(env(safe-area-inset-top) + 78px); left:50%; transform:translateX(-50%); z-index:6; background:rgba(11,10,8,.8); border:1px solid var(--gold-dark); color:var(--gold-light); font:500 12px Inter,sans-serif; padding:7px 14px; border-radius:999px; }
+  #loadingBadge{ position:fixed; top:calc(env(safe-area-inset-top) + 78px); left:50%; transform:translateX(-50%); z-index:6; background:rgba(11,10,8,.88); border:1px solid var(--gold-dark); color:var(--gold-light); font:500 12px Inter,sans-serif; padding:8px 14px; border-radius:14px; max-width:88vw; text-align:center; line-height:1.4; }
   #loadingBadge.hidden{ display:none; }
 </style>
 </head>
@@ -81,8 +81,8 @@
   </div>
 </section>
 
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/selfie_segmentation.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/pose.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/selfie_segmentation.js" onerror="window.__segScriptFailed=true"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/pose.js" onerror="window.__poseScriptFailed=true"></script>
 <script>
 /* ================== SETTINGS — edit these ================== */
 const SECRET_KEY   = "pepesvip2026";        // QR link must include ?key=pepesvip2026
@@ -98,6 +98,7 @@ const video=document.getElementById('cam'), out=document.getElementById('out'), 
 const review=document.getElementById('review'), shotImg=document.getElementById('shot');
 let mode='vip', facing='user', stream=null, seg=null, mask=null, wallCanvas=null, logo=new Image(), running=false, lastShot=null;
 let pose=null, poseLandmarks=null, wingsAttachTime=null, personBuf=null, personBufCtx=null;
+let segStatus='idle', poseStatus='idle', segErrMsg='', poseErrMsg='', segSendAt=0, poseSendAt=0;
 // shared downscaled frame for ML inference — much faster than feeding full-res video
 const PROC_W=256;
 const procCanvas=document.createElement('canvas'), procCtx=procCanvas.getContext('2d');
@@ -250,7 +251,22 @@ function render(){
   const w=out.width,h=out.height;
   const needsMask = mode==='vip' || mode==='wings';
   const needsPose = mode==='wings';
-  if((needsMask&&!mask) || (needsPose&&!poseLandmarks)) loadingBadge.classList.remove('hidden'); else loadingBadge.classList.add('hidden');
+  let badgeMsg='';
+  if(needsMask && !mask){
+    if(window.__segScriptFailed) badgeMsg='Background effect blocked — could not load from the internet. Try different wifi/data.';
+    else if(segStatus==='error') badgeMsg='Background effect error: '+segErrMsg;
+    else if(segSendAt && performance.now()-segSendAt>9000) badgeMsg='Background effect stuck loading (no response after 9s).';
+    else badgeMsg='Loading background effect…';
+  }
+  if(needsPose && !poseLandmarks){
+    let wMsg;
+    if(window.__poseScriptFailed) wMsg='Wings blocked — could not load from the internet.';
+    else if(poseStatus==='error') wMsg='Wings error: '+poseErrMsg;
+    else if(poseSendAt && performance.now()-poseSendAt>9000) wMsg='Wings stuck loading (no response after 9s).';
+    else wMsg='Loading wings…';
+    badgeMsg = badgeMsg ? badgeMsg+' | '+wMsg : wMsg;
+  }
+  if(badgeMsg){ loadingBadge.textContent=badgeMsg; loadingBadge.classList.remove('hidden'); } else loadingBadge.classList.add('hidden');
   ctx.save();
   if(facing==='user'){ ctx.translate(w,0); ctx.scale(-1,1); }
   if(mode==='vip'&&mask){
@@ -290,11 +306,14 @@ async function startCamera(){
     out.width=video.videoWidth||1080; out.height=video.videoHeight||1920;
     wallCanvas=buildWall(out.width,out.height);
     if(!seg){
-      seg=new SelfieSegmentation({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/${f}`});
-      seg.setOptions({modelSelection:1,selfieMode:false});
-      seg.onResults(r=>{ mask=r.segmentationMask; });
-      const pump=async()=>{ if(!running) return; if(mode==='vip'||mode==='wings'){ segSkip=(segSkip+1)%SEG_EVERY; if(segSkip===0){ try{ await seg.send({image:getProcFrame()}); }catch(e){} } } requestAnimationFrame(pump); };
-      running=true; pump();
+      try{
+        segStatus='loading model…';
+        seg=new SelfieSegmentation({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/${f}`});
+        seg.setOptions({modelSelection:1,selfieMode:false});
+        seg.onResults(r=>{ mask=r.segmentationMask; segStatus='ready'; });
+        const pump=async()=>{ if(!running) return; if(mode==='vip'||mode==='wings'){ segSkip=(segSkip+1)%SEG_EVERY; if(segSkip===0){ if(!segSendAt) segSendAt=performance.now(); try{ await seg.send({image:getProcFrame()}); }catch(e){ segStatus='error'; segErrMsg=(e&&e.message)||String(e); } } } requestAnimationFrame(pump); };
+        running=true; pump();
+      }catch(e){ segStatus='error'; segErrMsg=(e&&e.message)||String(e); }
     }
     running=true; gate.classList.add('hidden'); render();
   }catch(e){ gateBtn.disabled=false; gateBtn.textContent="Try again"; gateMsg.textContent="Camera access is needed. Allow it and try again."; }
@@ -304,11 +323,14 @@ document.getElementById('mVip').onclick=e=>{mode='vip';setSeg(e.target);};
 document.getElementById('mOverlay').onclick=e=>{mode='overlay';setSeg(e.target);};
 function ensurePose(){
   if(pose) return;
-  pose=new Pose({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/${f}`});
-  pose.setOptions({modelComplexity:0,smoothLandmarks:true,enableSegmentation:false,minDetectionConfidence:0.5,minTrackingConfidence:0.5});
-  pose.onResults(r=>{ if(r.poseLandmarks) poseLandmarks=r.poseLandmarks; else { poseLandmarks=null; wingsAttachTime=null; } });
-  const pumpPose=async()=>{ if(!running) return; if(mode==='wings'){ poseSkip=(poseSkip+1)%POSE_EVERY; if(poseSkip===0){ try{ await pose.send({image:getProcFrame()}); }catch(e){} } } requestAnimationFrame(pumpPose); };
-  pumpPose();
+  try{
+    poseStatus='loading model…';
+    pose=new Pose({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/${f}`});
+    pose.setOptions({modelComplexity:0,smoothLandmarks:true,enableSegmentation:false,minDetectionConfidence:0.5,minTrackingConfidence:0.5});
+    pose.onResults(r=>{ if(r.poseLandmarks){ poseLandmarks=r.poseLandmarks; poseStatus='ready'; } else { poseLandmarks=null; wingsAttachTime=null; } });
+    const pumpPose=async()=>{ if(!running) return; if(mode==='wings'){ poseSkip=(poseSkip+1)%POSE_EVERY; if(poseSkip===0){ if(!poseSendAt) poseSendAt=performance.now(); try{ await pose.send({image:getProcFrame()}); }catch(e){ poseStatus='error'; poseErrMsg=(e&&e.message)||String(e); } } } requestAnimationFrame(pumpPose); };
+    pumpPose();
+  }catch(e){ poseStatus='error'; poseErrMsg=(e&&e.message)||String(e); }
 }
 document.getElementById('mWings').onclick=e=>{mode='wings';wingsAttachTime=null;setSeg(e.target);ensurePose();};
 function setSeg(b){ document.querySelectorAll('.seg button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); }
