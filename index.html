@@ -98,6 +98,21 @@ const video=document.getElementById('cam'), out=document.getElementById('out'), 
 const review=document.getElementById('review'), shotImg=document.getElementById('shot');
 let mode='vip', facing='user', stream=null, seg=null, mask=null, wallCanvas=null, logo=new Image(), running=false, lastShot=null;
 let pose=null, poseLandmarks=null, wingsAttachTime=null, personBuf=null, personBufCtx=null;
+// shared downscaled frame for ML inference — much faster than feeding full-res video
+const PROC_W=256;
+const procCanvas=document.createElement('canvas'), procCtx=procCanvas.getContext('2d');
+let procFrameTick=-1, lastRenderFrame=-1;
+function getProcFrame(){
+  if(procFrameTick===lastRenderFrame) return procCanvas; // already drawn this render tick
+  const scale=PROC_W/(video.videoWidth||PROC_W);
+  const pw=PROC_W, ph=Math.max(1,Math.round((video.videoHeight||PROC_W)*scale));
+  if(procCanvas.width!==pw||procCanvas.height!==ph){ procCanvas.width=pw; procCanvas.height=ph; }
+  procCtx.drawImage(video,0,0,pw,ph);
+  procFrameTick=lastRenderFrame;
+  return procCanvas;
+}
+let segSkip=0, poseSkip=0;
+const SEG_EVERY=2, POSE_EVERY=2; // run inference every Nth loop tick
 logo.src=LOGO_SRC;
 
 function dist(lat1,lng1,lat2,lng2){const R=6371000,toR=x=>x*Math.PI/180;const dLat=toR(lat2-lat1),dLng=toR(lng2-lng1);const a=Math.sin(dLat/2)**2+Math.cos(toR(lat1))*Math.cos(toR(lat2))*Math.sin(dLng/2)**2;return 2*R*Math.asin(Math.sqrt(a));}
@@ -231,6 +246,7 @@ function drawOverlay(g,w,h){
 const loadingBadge=document.getElementById('loadingBadge');
 function render(){
   if(!running) return;
+  lastRenderFrame++;
   const w=out.width,h=out.height;
   const needsMask = mode==='vip' || mode==='wings';
   const needsPose = mode==='wings';
@@ -277,7 +293,7 @@ async function startCamera(){
       seg=new SelfieSegmentation({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/${f}`});
       seg.setOptions({modelSelection:1,selfieMode:false});
       seg.onResults(r=>{ mask=r.segmentationMask; });
-      const pump=async()=>{ if(!running) return; if(mode==='vip'||mode==='wings'){ try{ await seg.send({image:video}); }catch(e){} } requestAnimationFrame(pump); };
+      const pump=async()=>{ if(!running) return; if(mode==='vip'||mode==='wings'){ segSkip=(segSkip+1)%SEG_EVERY; if(segSkip===0){ try{ await seg.send({image:getProcFrame()}); }catch(e){} } } requestAnimationFrame(pump); };
       running=true; pump();
     }
     running=true; gate.classList.add('hidden'); render();
@@ -289,9 +305,9 @@ document.getElementById('mOverlay').onclick=e=>{mode='overlay';setSeg(e.target);
 function ensurePose(){
   if(pose) return;
   pose=new Pose({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5/${f}`});
-  pose.setOptions({modelComplexity:1,smoothLandmarks:true,enableSegmentation:false,minDetectionConfidence:0.5,minTrackingConfidence:0.5});
+  pose.setOptions({modelComplexity:0,smoothLandmarks:true,enableSegmentation:false,minDetectionConfidence:0.5,minTrackingConfidence:0.5});
   pose.onResults(r=>{ if(r.poseLandmarks) poseLandmarks=r.poseLandmarks; else { poseLandmarks=null; wingsAttachTime=null; } });
-  const pumpPose=async()=>{ if(!running) return; if(mode==='wings'){ try{ await pose.send({image:video}); }catch(e){} } requestAnimationFrame(pumpPose); };
+  const pumpPose=async()=>{ if(!running) return; if(mode==='wings'){ poseSkip=(poseSkip+1)%POSE_EVERY; if(poseSkip===0){ try{ await pose.send({image:getProcFrame()}); }catch(e){} } } requestAnimationFrame(pumpPose); };
   pumpPose();
 }
 document.getElementById('mWings').onclick=e=>{mode='wings';wingsAttachTime=null;setSeg(e.target);ensurePose();};
