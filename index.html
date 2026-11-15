@@ -36,6 +36,10 @@
   .stars{ position:absolute; inset:0; pointer-events:none; opacity:.5; }
   #loadingBadge{ position:fixed; top:calc(env(safe-area-inset-top) + 78px); left:50%; transform:translateX(-50%); z-index:6; background:rgba(11,10,8,.88); border:1px solid var(--gold-dark); color:var(--gold-light); font:500 12px Inter,sans-serif; padding:8px 14px; border-radius:14px; max-width:88vw; text-align:center; line-height:1.4; }
   #loadingBadge.hidden{ display:none; }
+  #maskDebug{ position:fixed; left:12px; bottom:calc(env(safe-area-inset-bottom) + 100px); width:90px; height:160px; border:2px solid var(--gold); border-radius:10px; z-index:6; background:#000; }
+  #maskDebug.hidden{ display:none; }
+  #maskDebugLabel{ position:fixed; left:12px; bottom:calc(env(safe-area-inset-bottom) + 262px); z-index:6; font:600 10px Inter,sans-serif; color:var(--gold-light); background:rgba(11,10,8,.8); padding:3px 8px; border-radius:8px; }
+  #maskDebugLabel.hidden{ display:none; }
 </style>
 </head>
 <body>
@@ -62,6 +66,8 @@
 </div>
 
 <div id="loadingBadge" class="hidden">Loading VIP effect…</div>
+<div id="maskDebugLabel" class="hidden">AI view (white=you)</div>
+<canvas id="maskDebug" class="hidden"></canvas>
 <div class="ui bottom" id="uiBottom">
   <div class="row">
     <button class="icon" id="flip" aria-label="Flip camera">&#8635;</button>
@@ -156,7 +162,8 @@ function getProcFrame(){
   const pw=PROC_W, ph=Math.max(1,Math.round((video.videoHeight||PROC_W)*scale));
   if(procCanvas.width!==pw||procCanvas.height!==ph){ procCanvas.width=pw; procCanvas.height=ph; }
   procCtx.drawImage(video,0,0,pw,ph);
-  whiteBalance(procCtx,pw,ph);
+  // whiteBalance(procCtx,pw,ph); // disabled: unconfirmed theory, may wash out
+  // real contrast the segmentation model needs more than it needs color correction
   procFrameTick=lastRenderFrame;
   return procCanvas;
 }
@@ -356,6 +363,8 @@ function drawOverlay(g,w,h){
 }
 
 const loadingBadge=document.getElementById('loadingBadge');
+const maskDebug=document.getElementById('maskDebug'), maskDebugCtx=maskDebug.getContext('2d');
+const maskDebugLabel=document.getElementById('maskDebugLabel');
 function render(){
   if(!running) return;
   lastRenderFrame++;
@@ -377,6 +386,20 @@ function render(){
     badgeMsg = badgeMsg ? badgeMsg+' | '+wMsg : wMsg;
   }
   if(badgeMsg){ loadingBadge.textContent=badgeMsg; loadingBadge.classList.remove('hidden'); } else loadingBadge.classList.add('hidden');
+  // Live preview of the raw AI mask, so we can SEE whether it's actually telling
+  // person from background apart (a clean white person-shape on black = working;
+  // a uniform white or grey blob = the model isn't distinguishing anything).
+  if(needsMask && mask){
+    maskDebug.classList.remove('hidden'); maskDebugLabel.classList.remove('hidden');
+    if(maskDebug.width!==90||maskDebug.height!==160){ maskDebug.width=90; maskDebug.height=160; }
+    maskDebugCtx.fillStyle='#000'; maskDebugCtx.fillRect(0,0,90,160);
+    maskDebugCtx.save();
+    if(facing==='user'){ maskDebugCtx.translate(90,0); maskDebugCtx.scale(-1,1); }
+    maskDebugCtx.drawImage(mask,0,0,90,160);
+    maskDebugCtx.restore();
+  } else {
+    maskDebug.classList.add('hidden'); maskDebugLabel.classList.add('hidden');
+  }
   ctx.save();
   if(facing==='user'){ ctx.translate(w,0); ctx.scale(-1,1); }
   if(mode==='vip'&&mask){
