@@ -44,6 +44,7 @@
   #personDebug.hidden{ display:none; }
   #personDebugLabel{ position:fixed; left:112px; bottom:calc(env(safe-area-inset-bottom) + 262px); z-index:6; font:600 10px Inter,sans-serif; color:#0f0; background:rgba(11,10,8,.8); padding:3px 8px; border-radius:8px; }
   #personDebugLabel.hidden{ display:none; }
+  #statsLabel{ position:fixed; top:28px; right:6px; z-index:9999; font:700 10px Inter,sans-serif; color:#7CFC00; background:rgba(0,0,0,.7); padding:3px 7px; border-radius:6px; text-align:right; white-space:pre; }
 </style>
 </head>
 <body>
@@ -60,7 +61,8 @@
   <canvas id="out"></canvas>
 </div>
 
-<div style="position:fixed; top:4px; right:6px; z-index:9999; font:700 11px Inter,sans-serif; color:#ff5252; background:rgba(0,0,0,.6); padding:2px 7px; border-radius:6px;">BUILD v11</div>
+<div style="position:fixed; top:4px; right:6px; z-index:9999; font:700 11px Inter,sans-serif; color:#ff5252; background:rgba(0,0,0,.6); padding:2px 7px; border-radius:6px;">BUILD v12</div>
+<div id="statsLabel"></div>
 <div class="ui top" id="uiTop">
   <div class="brand">Welcome to Pepe's</div>
   <div class="seg">
@@ -158,6 +160,8 @@ const gate=document.getElementById('gate'), gateMsg=document.getElementById('gat
 const video=document.getElementById('cam'), out=document.getElementById('out'), ctx=out.getContext('2d');
 const review=document.getElementById('review'), shotImg=document.getElementById('shot');
 let mode='vip', facing='environment', stream=null, imageSegmenter=null, mask=null, wallCanvas=null, logo=new Image(), running=false, lastShot=null;
+let segDelegate='…', maskAvgPct=0, maskMaxPct=0;
+const statsLabel=document.getElementById('statsLabel');
 let renderStarted=false; // guards against a second overlapping render() loop (see startCamera)
 let wallImg=new Image(), wingsImg=new Image();
 wallImg.src=WALL_IMG_SRC; wingsImg.src=WINGS_IMG_SRC;
@@ -202,7 +206,7 @@ function getProcFrame(){
   return procCanvas;
 }
 let segSkip=0, poseSkip=0;
-const SEG_EVERY=2, POSE_EVERY=2; // run inference every Nth loop tick
+const SEG_EVERY=4, POSE_EVERY=2; // run inference every Nth loop tick (seg halved from v11 to cut CPU heat)
 logo.src=LOGO_SRC;
 
 // Converts an MPMask confidence mask (0..1 per pixel) into a small alpha-only
@@ -215,10 +219,16 @@ function maskToCanvas(mpMask){
   if(maskWorkCanvas.width!==w||maskWorkCanvas.height!==h){ maskWorkCanvas.width=w; maskWorkCanvas.height=h; }
   const imgData=maskWorkCtx.createImageData(w,h);
   const px=imgData.data;
+  let sum=0, max=0;
   for(let i=0;i<data.length;i++){
-    const o=i*4, a=data[i]<=0?0:data[i]>=1?255:(data[i]*255)|0;
+    const v=data[i];
+    if(v>max) max=v;
+    sum+=v;
+    const o=i*4, a=v<=0?0:v>=1?255:(v*255)|0;
     px[o]=255; px[o+1]=255; px[o+2]=255; px[o+3]=a;
   }
+  maskAvgPct=Math.round((sum/data.length)*100);
+  maskMaxPct=Math.round(max*100);
   maskWorkCtx.putImageData(imgData,0,0);
   return maskWorkCanvas;
 }
@@ -229,8 +239,8 @@ async function ensureSegmenter(){
   try{
     const tv=await loadTasksVision();
     const opts={baseOptions:{modelAssetPath:SEG_MODEL_URL,delegate:"GPU"},canvas:document.createElement('canvas'),runningMode:"VIDEO",outputConfidenceMasks:true,outputCategoryMask:false};
-    try{ imageSegmenter=await withTimeout(tv.ImageSegmenter.createFromOptions(visionFileset,opts),20000,'Background model load'); }
-    catch(gpuErr){ opts.baseOptions.delegate="CPU"; delete opts.canvas; imageSegmenter=await withTimeout(tv.ImageSegmenter.createFromOptions(visionFileset,opts),20000,'Background model load (CPU)'); }
+    try{ imageSegmenter=await withTimeout(tv.ImageSegmenter.createFromOptions(visionFileset,opts),20000,'Background model load'); segDelegate='GPU'; }
+    catch(gpuErr){ opts.baseOptions.delegate="CPU"; delete opts.canvas; imageSegmenter=await withTimeout(tv.ImageSegmenter.createFromOptions(visionFileset,opts),20000,'Background model load (CPU)'); segDelegate='CPU'; }
   }catch(e){ segStatus='error'; segErrMsg=(e&&e.message)||String(e); }
 }
 function processSegmentationTick(){
@@ -445,6 +455,7 @@ function renderFrame(){
     badgeMsg = badgeMsg ? badgeMsg+' | '+wMsg : wMsg;
   }
   if(badgeMsg){ loadingBadge.textContent=badgeMsg; loadingBadge.classList.remove('hidden'); } else loadingBadge.classList.add('hidden');
+  statsLabel.textContent = needsMask ? ('seg:'+segDelegate+' avg:'+maskAvgPct+'% max:'+maskMaxPct+'%') : '';
   // Live preview of the raw AI mask, so we can SEE whether it's actually telling
   // person from background apart (a clean white person-shape on black = working;
   // a uniform white or grey blob = the model isn't distinguishing anything).
