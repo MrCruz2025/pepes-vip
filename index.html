@@ -40,6 +40,10 @@
   #maskDebug.hidden{ display:none; }
   #maskDebugLabel{ position:fixed; left:12px; bottom:calc(env(safe-area-inset-bottom) + 262px); z-index:6; font:600 10px Inter,sans-serif; color:var(--gold-light); background:rgba(11,10,8,.8); padding:3px 8px; border-radius:8px; }
   #maskDebugLabel.hidden{ display:none; }
+  #personDebug{ position:fixed; left:112px; bottom:calc(env(safe-area-inset-bottom) + 100px); width:90px; height:160px; border:2px solid #0f0; border-radius:10px; z-index:6; background:#000; }
+  #personDebug.hidden{ display:none; }
+  #personDebugLabel{ position:fixed; left:112px; bottom:calc(env(safe-area-inset-bottom) + 262px); z-index:6; font:600 10px Inter,sans-serif; color:#0f0; background:rgba(11,10,8,.8); padding:3px 8px; border-radius:8px; }
+  #personDebugLabel.hidden{ display:none; }
 </style>
 </head>
 <body>
@@ -56,7 +60,7 @@
   <canvas id="out"></canvas>
 </div>
 
-<div style="position:fixed; top:4px; right:6px; z-index:9999; font:700 11px Inter,sans-serif; color:#ff5252; background:rgba(0,0,0,.6); padding:2px 7px; border-radius:6px;">BUILD v9</div>
+<div style="position:fixed; top:4px; right:6px; z-index:9999; font:700 11px Inter,sans-serif; color:#ff5252; background:rgba(0,0,0,.6); padding:2px 7px; border-radius:6px;">BUILD v11</div>
 <div class="ui top" id="uiTop">
   <div class="brand">Welcome to Pepe's</div>
   <div class="seg">
@@ -69,6 +73,8 @@
 <div id="loadingBadge" class="hidden">Loading VIP effect…</div>
 <div id="maskDebugLabel" class="hidden">AI view (white=you)</div>
 <canvas id="maskDebug" class="hidden"></canvas>
+<div id="personDebugLabel" class="hidden">cutout (green=empty)</div>
+<canvas id="personDebug" class="hidden"></canvas>
 <div class="ui bottom" id="uiBottom">
   <div class="row">
     <button class="icon hidden" id="flip" aria-label="Flip camera">&#8635;</button>
@@ -411,6 +417,8 @@ function drawOverlay(g,w,h){
 const loadingBadge=document.getElementById('loadingBadge');
 const maskDebug=document.getElementById('maskDebug'), maskDebugCtx=maskDebug.getContext('2d');
 const maskDebugLabel=document.getElementById('maskDebugLabel');
+const personDebug=document.getElementById('personDebug'), personDebugCtx=personDebug.getContext('2d');
+const personDebugLabel=document.getElementById('personDebugLabel');
 function render(){
   if(!running) return;
   try{ renderFrame(); }
@@ -454,15 +462,6 @@ function renderFrame(){
   ctx.save();
   if(facing==='user'){ ctx.translate(w,0); ctx.scale(-1,1); }
   if(mode==='vip'){
-    // TEMP DIAGNOSTIC: solid magenta fill, no image/canvas involved at all — if this
-    // doesn't show up on screen, the problem isn't the wall art or the AI, it's
-    // something more basic about how this canvas is being displayed.
-    ctx.fillStyle='#ff00ff'; ctx.fillRect(0,0,w,h);
-    // Simplified to match how Overlay works (draw background, then draw the thing on
-    // top — no blend-mode tricks on the visible canvas): draw the wall as the plain
-    // background first, exactly like Overlay draws the real video as its background,
-    // then cut the person out of the video (same proven method Angel Wings uses) and
-    // draw just that cutout on top.
     ctx.drawImage(wallCanvas,0,0,w,h);             // wall as the background
     if(mask){
       if(!personBuf){ personBuf=document.createElement('canvas'); personBufCtx=personBuf.getContext('2d'); }
@@ -473,6 +472,19 @@ function renderFrame(){
       personBufCtx.drawImage(video,0,0,w,h);
       personBufCtx.globalCompositeOperation='source-over';
       ctx.drawImage(personBuf,0,0,w,h);            // person cutout on top of the wall
+      // SECOND debug thumbnail: shows the ACTUAL "person cutout" image being drawn on
+      // top of the wall, on a bright green backdrop so any opacity is obvious — if this
+      // is solid/mostly green, the cutout is small and the wall SHOULD be visible; if
+      // it's mostly non-green, something is making the cutout cover almost everything.
+      personDebug.classList.remove('hidden'); personDebugLabel.classList.remove('hidden');
+      if(personDebug.width!==90||personDebug.height!==160){ personDebug.width=90; personDebug.height=160; }
+      personDebugCtx.fillStyle='#00ff00'; personDebugCtx.fillRect(0,0,90,160);
+      personDebugCtx.save();
+      if(facing==='user'){ personDebugCtx.translate(90,0); personDebugCtx.scale(-1,1); }
+      personDebugCtx.drawImage(personBuf,0,0,90,160);
+      personDebugCtx.restore();
+    } else {
+      personDebug.classList.add('hidden'); personDebugLabel.classList.add('hidden');
     }
   } else if(mode==='wings'){
     ctx.drawImage(video,0,0,w,h);                  // real room background
