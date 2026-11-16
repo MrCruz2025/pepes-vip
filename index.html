@@ -70,7 +70,7 @@
 <canvas id="maskDebug" class="hidden"></canvas>
 <div class="ui bottom" id="uiBottom">
   <div class="row">
-    <button class="icon" id="flip" aria-label="Flip camera">&#8635;</button>
+    <button class="icon hidden" id="flip" aria-label="Flip camera">&#8635;</button>
     <button id="shutter" aria-label="Take photo"></button>
     <div class="icon" style="visibility:hidden"></div>
   </div>
@@ -134,7 +134,8 @@ const WINGS_IMG_SRC = "angel-wings.png";
 const gate=document.getElementById('gate'), gateMsg=document.getElementById('gateMsg'), gateBtn=document.getElementById('gateBtn');
 const video=document.getElementById('cam'), out=document.getElementById('out'), ctx=out.getContext('2d');
 const review=document.getElementById('review'), shotImg=document.getElementById('shot');
-let mode='vip', facing='user', stream=null, imageSegmenter=null, mask=null, wallCanvas=null, logo=new Image(), running=false, lastShot=null;
+let mode='vip', facing='environment', stream=null, imageSegmenter=null, mask=null, wallCanvas=null, logo=new Image(), running=false, lastShot=null;
+let renderStarted=false; // guards against a second overlapping render() loop (see startCamera)
 let wallImg=new Image(), wingsImg=new Image();
 wallImg.src=WALL_IMG_SRC; wingsImg.src=WINGS_IMG_SRC;
 function imgReady(img){ return img.complete && img.naturalWidth>0; }
@@ -475,7 +476,10 @@ async function startCamera(){
       const pump=()=>{ if(!running) return; if(mode==='vip'||mode==='wings'){ segSkip=(segSkip+1)%SEG_EVERY; if(segSkip===0){ if(!segSendAt) segSendAt=performance.now(); processSegmentationTick(); } } requestAnimationFrame(pump); };
       running=true; pump();
     }
-    running=true; gate.classList.add('hidden'); render();
+    running=true; gate.classList.add('hidden');
+    if(!renderStarted){ renderStarted=true; render(); } // only ever start ONE render loop —
+    // calling render() again here on every flip/retry used to start a second loop that
+    // never stopped, so two draw loops ran at once and fought over the same canvas.
   }catch(e){ gateBtn.disabled=false; gateBtn.textContent="Try again"; gateMsg.textContent="Camera access is needed. Allow it and try again."; }
 }
 
