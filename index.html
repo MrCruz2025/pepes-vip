@@ -122,12 +122,22 @@ const PEPES_LNG    = -122.6123690;
 const RADIUS_M     = 150;                   // how close the phone must be
 const REQUIRE_GPS  = true;                  // false = key only, no location check
 const LOGO_SRC     = "pepes-logo.png";
+// Optional custom art — if these files exist in the repo (same place as the
+// logo), they're used instead of the hand-drawn gold pattern/wings below.
+// If they're missing or fail to load, the app automatically falls back to
+// the current hand-drawn version, so it's safe to leave these as-is until
+// the real images are ready.
+const WALL_IMG_SRC  = "vip-wall-bg.png";
+const WINGS_IMG_SRC = "angel-wings.png";
 /* =========================================================== */
 
 const gate=document.getElementById('gate'), gateMsg=document.getElementById('gateMsg'), gateBtn=document.getElementById('gateBtn');
 const video=document.getElementById('cam'), out=document.getElementById('out'), ctx=out.getContext('2d');
 const review=document.getElementById('review'), shotImg=document.getElementById('shot');
 let mode='vip', facing='user', stream=null, imageSegmenter=null, mask=null, wallCanvas=null, logo=new Image(), running=false, lastShot=null;
+let wallImg=new Image(), wingsImg=new Image();
+wallImg.src=WALL_IMG_SRC; wingsImg.src=WINGS_IMG_SRC;
+function imgReady(img){ return img.complete && img.naturalWidth>0; }
 let poseLandmarker=null, poseLandmarks=null, wingsAttachTime=null, personBuf=null, personBufCtx=null;
 let segStatus='idle', poseStatus='idle', segErrMsg='', poseErrMsg='', segSendAt=0, poseSendAt=0;
 let maskWorkCanvas=null, maskWorkCtx=null;
@@ -278,6 +288,15 @@ function goldText(g,text,x,y,size,weight=800){
 }
 function buildWall(w,h){
   const c=document.createElement('canvas'); c.width=w; c.height=h; const g=c.getContext('2d');
+  if(imgReady(wallImg)){
+    // custom art (Gemini-generated or otherwise) — has a transparent background, so
+    // fill the solid cream color first, then lay the gold pattern on top of it.
+    g.fillStyle='#F7F4EE'; g.fillRect(0,0,w,h);
+    const s=Math.max(w/wallImg.naturalWidth, h/wallImg.naturalHeight);
+    const dw=wallImg.naturalWidth*s, dh=wallImg.naturalHeight*s;
+    g.drawImage(wallImg, (w-dw)/2, (h-dh)/2, dw, dh);
+    return c;
+  }
   g.fillStyle='#F7F4EE'; g.fillRect(0,0,w,h);
   const cell=Math.round(w/3.4), colW=cell, rowH=cell*.72;
   const cols=Math.ceil(w/colW)+1, headerH=h*.24;
@@ -351,11 +370,18 @@ function drawWings(g,w,h,lm){
   g.globalAlpha=alpha;
   g.translate(midX,midY);
   g.rotate(angle*0.35); // slight tilt toward shoulder line, not full rotation
-  g.scale(scale,scale);
-  // right wing
-  g.save(); g.drawImage(spr.canvas,-spr.originX,-spr.originY); g.restore();
-  // left wing (mirror)
-  g.save(); g.scale(-1,1); g.drawImage(spr.canvas,-spr.originX,-spr.originY); g.restore();
+  if(imgReady(wingsImg)){
+    // custom art: one image already showing BOTH wings spread, centered on the shoulders
+    const iw=wingsImg.naturalWidth, ih=wingsImg.naturalHeight;
+    const drawW=len*2.1*scale, drawH=drawW*ih/iw;
+    g.drawImage(wingsImg, -drawW/2, -drawH*0.55, drawW, drawH);
+  } else {
+    g.scale(scale,scale);
+    // right wing
+    g.save(); g.drawImage(spr.canvas,-spr.originX,-spr.originY); g.restore();
+    // left wing (mirror)
+    g.save(); g.scale(-1,1); g.drawImage(spr.canvas,-spr.originX,-spr.originY); g.restore();
+  }
   g.restore();
 }
 
