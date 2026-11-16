@@ -340,11 +340,13 @@ function drawWings(g,w,h,lm){
   const shoulderW=Math.hypot(Rx-Lx,Ry-Ly);
   const angle=Math.atan2(Ry-Ly,Rx-Lx);
   if(!wingsAttachTime) wingsAttachTime=performance.now();
-  const t=Math.min(1,(performance.now()-wingsAttachTime)/1100);
+  const t=Math.min(1,(performance.now()-wingsAttachTime)/350); // was 1100ms — a brief
+  // pose-tracking blip (common under dim club lighting) reset this to 0 every time,
+  // so the wings rarely got a chance to reach full visibility before vanishing again.
   const eased=1-Math.pow(1-t,3);
   const len=shoulderW*2.0, wid=shoulderW*1.25;
   const spr=getWingSprite(len);
-  const scale=0.25+0.75*eased, alpha=eased;
+  const scale=0.7+0.3*eased, alpha=0.6+0.4*eased; // start mostly-visible instead of from 0
   g.save();
   g.globalAlpha=alpha;
   g.translate(midX,midY);
