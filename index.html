@@ -56,7 +56,7 @@
   <canvas id="out"></canvas>
 </div>
 
-<div style="position:fixed; top:4px; right:6px; z-index:9999; font:700 11px Inter,sans-serif; color:#ff5252; background:rgba(0,0,0,.6); padding:2px 7px; border-radius:6px;">BUILD v9</div>
+<div style="position:fixed; top:4px; right:6px; z-index:9999; font:700 11px Inter,sans-serif; color:#ff5252; background:rgba(0,0,0,.6); padding:2px 7px; border-radius:6px;">BUILD v10</div>
 <div class="ui top" id="uiTop">
   <div class="brand">Welcome to Pepe's</div>
   <div class="seg">
@@ -454,15 +454,11 @@ function renderFrame(){
   ctx.save();
   if(facing==='user'){ ctx.translate(w,0); ctx.scale(-1,1); }
   if(mode==='vip'){
-    // TEMP DIAGNOSTIC: solid magenta fill, no image/canvas involved at all — if this
-    // doesn't show up on screen, the problem isn't the wall art or the AI, it's
-    // something more basic about how this canvas is being displayed.
+    // TEMP DIAGNOSTIC: solid magenta fill ONLY — everything else below is skipped this
+    // time, so nothing can possibly draw over it. If magenta doesn't show, the problem
+    // is something basic about this canvas, not the wall art, mask, or AI.
     ctx.fillStyle='#ff00ff'; ctx.fillRect(0,0,w,h);
-    // Simplified to match how Overlay works (draw background, then draw the thing on
-    // top — no blend-mode tricks on the visible canvas): draw the wall as the plain
-    // background first, exactly like Overlay draws the real video as its background,
-    // then cut the person out of the video (same proven method Angel Wings uses) and
-    // draw just that cutout on top.
+    /* --- temporarily disabled for this test ---
     ctx.drawImage(wallCanvas,0,0,w,h);             // wall as the background
     if(mask){
       if(!personBuf){ personBuf=document.createElement('canvas'); personBufCtx=personBuf.getContext('2d'); }
@@ -474,6 +470,7 @@ function renderFrame(){
       personBufCtx.globalCompositeOperation='source-over';
       ctx.drawImage(personBuf,0,0,w,h);            // person cutout on top of the wall
     }
+    --- end temporarily disabled --- */
   } else if(mode==='wings'){
     ctx.drawImage(video,0,0,w,h);                  // real room background
     drawWings(ctx,w,h,poseLandmarks);              // wings behind the person
