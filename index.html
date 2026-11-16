@@ -56,7 +56,7 @@
   <canvas id="out"></canvas>
 </div>
 
-<div style="position:fixed; top:4px; right:6px; z-index:9999; font:700 11px Inter,sans-serif; color:#ff5252; background:rgba(0,0,0,.6); padding:2px 7px; border-radius:6px;">BUILD v7</div>
+<div style="position:fixed; top:4px; right:6px; z-index:9999; font:700 11px Inter,sans-serif; color:#ff5252; background:rgba(0,0,0,.6); padding:2px 7px; border-radius:6px;">BUILD v8</div>
 <div class="ui top" id="uiTop">
   <div class="brand">Welcome to Pepe's</div>
   <div class="seg">
@@ -94,6 +94,22 @@
    "Solutions" API, which is no longer updated and has known reliability issues
    on mobile Safari (the freezing / stuck-loading / runs-but-shows-nothing bugs
    we kept hitting). */
+// On-screen error catcher — since we can't see the phone's real browser console
+// remotely, any JS error gets printed directly on the screen in plain red text
+// instead of silently failing and freezing things with no clue why.
+let fatalErrBox=null;
+function showFatalError(msg){
+  if(!fatalErrBox){
+    fatalErrBox=document.createElement('div');
+    fatalErrBox.style.cssText='position:fixed;top:30px;left:6px;right:6px;z-index:99999;background:#c00;color:#fff;font:600 12px monospace;padding:8px;border-radius:8px;max-height:40vh;overflow:auto;white-space:pre-wrap;';
+    document.body.appendChild(fatalErrBox);
+  }
+  const line=document.createElement('div'); line.textContent=new Date().toLocaleTimeString()+' — '+msg;
+  fatalErrBox.appendChild(line);
+}
+window.addEventListener('error', e=>{ showFatalError('JS error: '+(e.message||'')+' @ line '+(e.lineno||'?')); });
+window.addEventListener('unhandledrejection', e=>{ showFatalError('Promise error: '+((e.reason&&e.reason.message)||e.reason)); });
+
 const TV_VERSION = "1.2.3";
 const TV_BASE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${TV_VERSION}`;
 // Self-hosted in this repo (same folder as the logo) instead of pulled live from
@@ -397,6 +413,11 @@ const maskDebug=document.getElementById('maskDebug'), maskDebugCtx=maskDebug.get
 const maskDebugLabel=document.getElementById('maskDebugLabel');
 function render(){
   if(!running) return;
+  try{ renderFrame(); }
+  catch(e){ showFatalError('render() crashed: '+(e&&e.message||e)); }
+  requestAnimationFrame(render);
+}
+function renderFrame(){
   lastRenderFrame++;
   const w=out.width,h=out.height;
   const needsMask = mode==='vip' || mode==='wings';
@@ -467,7 +488,6 @@ function render(){
   }
   ctx.restore();
   if(mode==='overlay') drawOverlay(ctx,w,h);
-  requestAnimationFrame(render);
 }
 
 async function startCamera(){
@@ -487,7 +507,7 @@ async function startCamera(){
     if(!renderStarted){ renderStarted=true; render(); } // only ever start ONE render loop —
     // calling render() again here on every flip/retry used to start a second loop that
     // never stopped, so two draw loops ran at once and fought over the same canvas.
-  }catch(e){ gateBtn.disabled=false; gateBtn.textContent="Try again"; gateMsg.textContent="Camera access is needed. Allow it and try again."; }
+  }catch(e){ gateBtn.disabled=false; gateBtn.textContent="Try again"; gateMsg.textContent="Camera access is needed. Allow it and try again."; showFatalError('startCamera() failed: '+(e&&e.message||e)); }
 }
 
 document.getElementById('mVip').onclick=e=>{mode='vip';setSeg(e.target);};
